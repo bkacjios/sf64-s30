@@ -13,6 +13,33 @@
 #include "PR/ultratypes.h"
 #include "PR/guint.h"
 
+#ifdef TARGET_S30
+// PocketGo S30 (little-endian): the integer and fraction halves are stored as
+// the Mtx union names them (u.i, u.f), as Matrix_ToMtx and gIdentityMtx do;
+// the word-packing versions below put them in the other order.
+void guMtxF2L(float mf[4][4], Mtx* m) {
+    int r, c;
+
+    for (r = 0; r < 4; r++) {
+        for (c = 0; c < 4; c++) {
+            s32 v = mf[r][c] * 65536.0f;
+
+            m->u.i[r][c] = (u32) v >> 16;
+            m->u.f[r][c] = v & 0xFFFF;
+        }
+    }
+}
+
+void guMtxL2F(float mf[4][4], Mtx* m) {
+    int r, c;
+
+    for (r = 0; r < 4; r++) {
+        for (c = 0; c < 4; c++) {
+            mf[r][c] = (s32) (((u32) m->u.i[r][c] << 16) | m->u.f[r][c]) / 65536.0f;
+        }
+    }
+}
+#else
 void guMtxF2L(float mf[4][4], Mtx* m) {
     int i, j;
     int e1, e2;
@@ -52,6 +79,8 @@ void guMtxL2F(float mf[4][4], Mtx* m) {
         }
     }
 }
+
+#endif
 
 void guMtxIdentF(float mf[4][4]) {
     int i, j;

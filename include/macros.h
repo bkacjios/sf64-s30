@@ -23,7 +23,12 @@
 #define RAND_INT_SEEDED(max) ((s32)(Rand_ZeroOneSeeded()*(max)))
 #define RAND_FLOAT_CENTERED_SEEDED(width) ((Rand_ZeroOneSeeded()-0.5f)*(width))
 
+#ifdef TARGET_S30
+// PocketGo S30: each asset segment is mapped at its segmented address (src/s30/ultra.c)
+#define SEGMENTED_TO_VIRTUAL(segment) ((void*)(segment))
+#else
 #define SEGMENTED_TO_VIRTUAL(segment) ((void*)OS_PHYSICAL_TO_K0(gSegments[((uintptr_t)(segment)<<4)>>0x1C]+(((uintptr_t)(segment))&0xFFFFFF)))
+#endif
 #define SEGMENTED_TO_VIRTUAL_JP(segment) ((void*)OS_PHYSICAL_TO_K0(gSegments[((uintptr_t)(segment)&(0xF<<0x18))>>0x18]+(((uintptr_t)(segment))&0xFFFFFF)))
 
 #define ARRAY_COUNT(arr) (s32)(sizeof(arr) / sizeof(arr[0]))

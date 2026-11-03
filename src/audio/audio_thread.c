@@ -35,6 +35,68 @@ static const char devstr12[] = "Undefined Port Command %d\n";
 static const char devstr13[] = "specchg conjunction error (Msg:%d Cur:%d)\n";
 static const char devstr14[] = "Error : Queue is not empty ( %x ) \n";
 
+#ifdef TARGET_S30
+// The C library's (its headers clash with the game's)
+extern char* getenv(const char*);
+extern int printf(const char*, ...);
+extern u8 sAudioResetStatus;
+extern int gS30MixDbg[4];
+static s32 sS30CmdMsgs;
+// SF64_AUDIODBG: the sequence players and active notes, about once a second
+static void AudioThread_S30Debug(void) {
+    static s32 sOn = -1, sCount;
+    s32 i, notes = 0, fonts = 0;
+
+    if (sOn < 0) {
+        sOn = getenv("SF64_AUDIODBG") != NULL;
+    }
+    if (!sOn || (++sCount % 60) != 0) {
+        return;
+    }
+    for (i = 0; i < gNumNotes; i++) {
+        notes += gNotes[i].sampleState.bitField0.enabled;
+    }
+    for (i = 0; i < 64; i++) {
+        fonts += gFontLoadStatus[i] != 0;
+    }
+    printf("audio: notes %d/%d, fonts loaded %d, resetStep %d, resetStatus %d, cmd msgs %d, players", (int) notes,
+           (int) gNumNotes, (int) fonts, (int) gAudioResetStep, (int) sAudioResetStatus, (int) sS30CmdMsgs);
+    for (i = 0; i < 4; i++) {
+        printf(" [%d: %s seq %d]", (int) i, gSeqPlayers[i].enabled ? "on" : "off", gSeqPlayers[i].seqId);
+    }
+    printf(" | adpcm %d (peak %d) envmix %d (vol %d)\n", gS30MixDbg[0], gS30MixDbg[2], gS30MixDbg[1], gS30MixDbg[3]);
+    {
+        SequencePlayer* sp = &gSeqPlayers[0];
+        s32 c, l, chans = 0, layers = 0, withNote = 0, withInst = 0;
+        for (c = 0; c < 16; c++) {
+            SequenceChannel* ch = sp->channels[c];
+            if (!IS_SEQUENCE_CHANNEL_VALID(ch) || !ch->enabled) {
+                continue;
+            }
+            chans++;
+            withInst += ch->instrument != NULL;
+            for (l = 0; l < 4; l++) {
+                if (ch->layers[l] != NULL && ch->layers[l]->enabled) {
+                    layers++;
+                    withNote += ch->layers[l]->note != NULL;
+                }
+            }
+        }
+        printf("  player 0: pc +%d, channels %d (with instrument %d), layers %d (with note %d)\n",
+               (int) (sp->scriptState.pc - sp->seqData), (int) chans, (int) withInst, (int) layers, (int) withNote);
+    }
+    for (i = 0; i < gNumNotes; i++) {
+        NoteSampleState* ss = &gNotes[i].sampleState;
+        if (ss->bitField0.enabled) {
+            printf("  note %d: rate %d pan %d/%d gain %d synth %d finished %d needsInit %d\n", (int) i,
+                   ss->resampleRate, ss->panVolLeft, ss->panVolRight, ss->gain, ss->bitField1.isSyntheticWave,
+                   ss->bitField0.finished, ss->bitField0.needsInit);
+        }
+    }
+    gS30MixDbg[0] = gS30MixDbg[1] = gS30MixDbg[2] = gS30MixDbg[3] = 0;
+}
+#endif
+
 SPTask* AudioThread_CreateTask(void) {
     static s32 gMaxAbiCmdCnt = 128;
     static SPTask* gWaitingAudioTask = NULL;
@@ -108,9 +170,15 @@ SPTask* AudioThread_CreateTask(void) {
         gAiBuffLengths[aiBuffIndex] = gAudioBufferParams.maxAiBufferLength;
     }
     while (MQ_GET_MESG(gThreadCmdProcQueue, &msg)) {
+#ifdef TARGET_S30
+        sS30CmdMsgs++;
+#endif
         AudioThread_ProcessCmds(msg);
     }
     gCurAbiCmdBuffer = AudioSynth_Update(gCurAbiCmdBuffer, &abiCmdCount, aiBuffer, gAiBuffLengths[aiBuffIndex]);
+#ifdef TARGET_S30
+    AudioThread_S30Debug();
+#endif
     gAudioRandom = osGetCount() * (gAudioRandom + gAudioTaskCountQ);
     gAudioRandom = gAiBuffers[aiBuffIndex][gAudioTaskCountQ & 0xFF] + gAudioRandom;
 

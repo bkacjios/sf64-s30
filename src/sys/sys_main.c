@@ -434,6 +434,57 @@ void Main_StartNextTask(void) {
     }
 }
 
+#ifdef TARGET_S30
+#include "s30_platform.h"
+
+// PocketGo S30: one game thread runs what the graphics thread did, and the
+// display list is drawn right away (src/s30/gfx.c), paced by the display to
+// gVIsPerFrame refreshes per frame. The serial thread (controller, save) and
+// the timer thread are real threads (src/s30/ultra.c); the main, idle and
+// audio threads aren't used.
+static void S30_BuildFrame(void) {
+    gSPSegment(gUnkDisp1++, 0, 0);
+    gSPDisplayList(gMasterDisp++, gGfxPool->unkDL1);
+    Game_Update();
+    if (gStartNMI == 1) {
+        Graphics_NMIWipe();
+    }
+    gSPEndDisplayList(gUnkDisp1++);
+    gSPEndDisplayList(gUnkDisp2++);
+    gSPDisplayList(gMasterDisp++, gGfxPool->unkDL2);
+    gDPFullSync(gMasterDisp++);
+    gSPEndDisplayList(gMasterDisp++);
+}
+
+void S30_GameMain(void) {
+    Main_Initialize();
+    Main_InitMesgQueues();
+    osCreateThread(&gTimerThread, THREAD_ID_TIMER, Timer_ThreadEntry, NULL,
+                   gTimerThreadStack + sizeof(gTimerThreadStack), 60);
+    osStartThread(&gTimerThread);
+    osCreateThread(&gSerialThread, THREAD_ID_SERIAL, SerialInterface_ThreadEntry, NULL,
+                   gSerialThreadStack + sizeof(gSerialThreadStack), 20);
+    osStartThread(&gSerialThread);
+    Lib_FillScreen(true);
+    S30_AudioStart(); // the audio thread's setup (AudioLoad_Init, Audio_InitSounds), then the thread
+    Game_Initialize();
+    osSendMesg(&gSerialThreadMesgQueue, (OSMesg) SI_READ_CONTROLLER, OS_MESG_NOBLOCK);
+    Graphics_InitializeTask(gSysFrameCount);
+    S30_BuildFrame();
+    while (true) {
+        gSysFrameCount++;
+        Graphics_InitializeTask(gSysFrameCount);
+        MQ_WAIT_FOR_MESG(&gControllerMesgQueue, NULL);
+        osSendMesg(&gSerialThreadMesgQueue, (OSMesg) SI_RUMBLE, OS_MESG_NOBLOCK);
+        Controller_UpdateInput();
+        osSendMesg(&gSerialThreadMesgQueue, (OSMesg) SI_READ_CONTROLLER, OS_MESG_NOBLOCK);
+        S30_BuildFrame();
+        S30Display_SetUpdateRate(MAX(MIN(gVIsPerFrame, 4), 1));
+        pc_process_displaylist(gGfxPool->masterDL);
+        Audio_Update();
+    }
+}
+#else
 void Main_ThreadEntry(void* arg0) {
     OSMesg osMesg;
     u8 mesg;
@@ -492,6 +543,9 @@ void Idle_ThreadEntry(void* arg0) {
     for (;;) {}
 }
 
+#endif
+
+#ifndef TARGET_S30
 void bootproc(void) {
     RdRam_CheckIPL3();
     osInitialize();
@@ -503,6 +557,7 @@ void bootproc(void) {
                    255);
     osStartThread(&sIdleThread);
 }
+#endif
 
 #if MODS_ISVIEWER == 1
 #include "../mods/isviewer.c"

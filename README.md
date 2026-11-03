@@ -1,3 +1,22 @@
+# Star Fox 64 for the PocketGo S30
+
+This fork runs the [sf64 decompilation](https://github.com/sonicdcer/sf64) natively on the PocketGo S30
+(Allwinner A33, ARMv7, Alpine Linux) as part of [pocketgo-s30-cfw](https://github.com/bkacjios/pocketgo-s30-cfw)
+(`ports/sf64`), on its shared N64 platform library (`n64/`: display, F3DEX renderer, audio, input).
+
+```
+cp <Star Fox 64 (USA) (Rev 1)>.z64 baserom.us.rev1.z64
+python3 -m venv .venv && .venv/bin/pip install -r tools/requirements-python.txt
+make -f Makefile.s30 tools/mio0 extract   # decompress, split, Torch assets (Torch from tools/Torch)
+make -f Makefile.s30 assets               # asset segments for ARM -> build_s30/assets/data
+make -f Makefile.s30 -j$(nproc)           # starfox64
+```
+
+On the card: `starfox64`, `build_s30/assets/data/*.bin` and `baserom.us.rev1.uncompressed.z64` in
+`/mnt/sd/home/ports/sf64/data`. See `src/s30/` (libultra on Linux, segment loading) and `tools/s30/`.
+
+---
+
 ### Progress:
 
 <p align="left">

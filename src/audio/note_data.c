@@ -197,12 +197,24 @@ u8 gDefaultShortNoteVelocityTable[] = {
 u8 gDefaultShortNoteGateTimeTable[] = {
     229, 203, 177, 151, 139, 126, 113, 100, 87, 74, 61, 48, 36, 23, 10, 0,
 };
+#ifdef TARGET_S30
+// Envelopes are read big-endian (audio_effects.c swaps them as it reads, like
+// the sound fonts' ones)
+#define ENV_BE(x) ((s16) (((u16) (s16) (x) >> 8) | ((u16) (s16) (x) << 8)))
+EnvelopePoint gDefaultEnvelope[] = {
+    { ENV_BE(4), ENV_BE(32000) },
+    { ENV_BE(1000), ENV_BE(32000) },
+    { ENV_BE(ADSR_HANG), 0 },
+    { ENV_BE(ADSR_DISABLE), 0 },
+};
+#else
 EnvelopePoint gDefaultEnvelope[] = {
     { 4, 32000 },
     { 1000, 32000 },
     { ADSR_HANG, 0 },
     { ADSR_DISABLE, 0 },
 };
+#endif
 
 NoteSampleState gZeroedSampleState = { 0 };
 

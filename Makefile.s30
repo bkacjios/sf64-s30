@@ -1,0 +1,129 @@
+# Makefile.s30 - Star Fox 64 for the PocketGo S30 (Allwinner A33, ARMv7
+# hard-float, Alpine musl, GLES2 on KMS/EGL, ALSA, evdev).
+#
+#   make -f Makefile.s30 extract    # ROM -> baserom.us.rev1.uncompressed.z64, splat, Torch (host)
+#   make -f Makefile.s30 assets     # asset segments for ARM -> data/*.bin
+#   make -f Makefile.s30 -j$(nproc) # starfox64
+#
+# WORK is the pocketgo-s30 build tree (sysroot + armv7-clang wrapper).
+
+WORK ?= ../../s30-build
+# The shared N64 platform library (display, renderer, audio, input)
+N64LIB ?= ../../n64
+SYSROOT := $(abspath $(WORK)/sysroot)
+PYTHON ?= .venv/bin/python3
+VERSION := us
+REV := rev1
+BASEROM := baserom.$(VERSION).$(REV).z64
+BASEROM_UNCOMPRESSED := baserom.$(VERSION).$(REV).uncompressed.z64
+TORCH := tools/Torch/cmake-build-release/torch
+MIO0 := tools/mio0
+
+# Game code: GCC (it needs -fno-toplevel-reorder, which clang lacks) against
+# the device's musl headers; platform layer and link: the project's clang/lld
+# wrapper against the Alpine sysroot.
+CC := arm-none-eabi-gcc
+OBJCOPY := arm-none-eabi-objcopy
+LINK := $(WORK)/bin/armv7-clang
+
+TARGET_FLAGS := -marm -march=armv7-a -mtune=cortex-a7 -mfpu=neon-vfpv4 \
+    -mfloat-abi=hard -fno-short-enums -isystem $(SYSROOT)/usr/include
+
+DEFINES := -DVERSION_US=1 -DF3DEX_GBI -DNDEBUG -D_MIPS_SZLONG=32 -D_LANGUAGE_C -DLANGUAGE_C \
+    -DBUILD_VERSION=VERSION_H -DNON_MATCHING -DAVOID_UB -DTARGET_S30 -D_GNU_SOURCE
+INCLUDES := -Iinclude -Iinclude/s30 -I$(N64LIB)/include/s30 -Ibin/$(VERSION).$(REV) -I. \
+    -Ilib/ultralib/include -Ilib/ultralib/include/PR -Ilib/ultralib/include/ido
+
+CFLAGS := $(TARGET_FLAGS) -O2 -g -std=gnu11 $(DEFINES) $(INCLUDES) \
+    -fno-toplevel-reorder -fwrapv -fno-strict-aliasing -fcommon -funsigned-char \
+    -Wno-incompatible-pointer-types -Wno-int-conversion -Wno-implicit-function-declaration \
+    -MMD -MP
+
+BUILD_DIR := build_s30
+include $(N64LIB)/n64.mk
+TARGET := starfox64
+LIBS := $(N64LIB_LIBS)
+
+# Files #included by others are not compiled on their own
+INCLUDED := src/engine/fox_colheaders.c src/engine/fox_edata_info.c src/engine/fox_load_inits.c \
+    src/engine/fox_rcp_setup.c src/overlays/ovl_ending/fox_end2_data.c $(wildcard src/mods/*.c)
+# libultra's sine and cosine take doubles apart as big-endian words; the
+# platform layer (src/s30/ultra.c) has them on the C library's
+INCLUDED += src/libultra/gu/sinf.c src/libultra/gu/cosf.c
+
+GAME_SRCS := $(filter-out $(INCLUDED), \
+    src/buffers.c src/dmatable.c src/libc_math64.c \
+    $(wildcard src/sys/*.c) $(wildcard src/engine/*.c) $(wildcard src/audio/*.c) \
+    $(wildcard src/overlays/*/*.c) $(wildcard src/libultra/gu/*.c))
+PLATFORM_SRCS := $(wildcard src/s30/*.c)
+
+GAME_OBJS := $(patsubst src/%.c,$(BUILD_DIR)/src/%.o,$(GAME_SRCS))
+PLATFORM_OBJS := $(patsubst src/%.c,$(BUILD_DIR)/src/%.o,$(PLATFORM_SRCS))
+# Generated tables (tools/s30/make_segments.py, make_assets.py)
+GEN_OBJS := $(BUILD_DIR)/segtab.o $(BUILD_DIR)/assets/textab.o
+ALL_OBJS := $(GAME_OBJS) $(PLATFORM_OBJS) $(GEN_OBJS) $(N64LIB_OBJS)
+
+ASSET_DIR := $(BUILD_DIR)/assets
+
+all: $(TARGET)
+
+objects: $(GAME_OBJS)
+
+extract:
+	$(PYTHON) tools/comptool.py -dse baserom -m $(MIO0) $(BASEROM) $(BASEROM_UNCOMPRESSED)
+	cat yamls/$(VERSION)/$(REV)/header.yaml yamls/$(VERSION)/$(REV)/main.yaml \
+	    yamls/$(VERSION)/$(REV)/assets.yaml yamls/$(VERSION)/$(REV)/overlays.yaml > starfox64.$(VERSION).$(REV).yaml
+	$(PYTHON) tools/splat/split.py starfox64.$(VERSION).$(REV).yaml
+	$(TORCH) code $(BASEROM_UNCOMPRESSED)
+	$(TORCH) header $(BASEROM_UNCOMPRESSED)
+
+$(MIO0): tools/mio0-decompressor/libmio0.c
+	cc -O2 -DMIO0_STANDALONE -o $@ $<
+
+assets:
+	S30_SYSROOT=$(SYSROOT) $(PYTHON) tools/s30/make_assets.py
+
+# Image base 0x40000000: code, data and the heap sit above the asset segments
+# (mapped at 0x01000000-0x0FFFFFFF, see src/s30/ultra.c)
+$(TARGET): $(ALL_OBJS) $(BUILD_DIR)/segments.ld | check-assets
+	$(LINK) -no-pie -Wl,--image-base=0x40000000 $(ALL_OBJS) -o $@ \
+	    -Wl,$(ASSET_DIR)/symbols.ld -Wl,$(BUILD_DIR)/segments.ld $(LIBS)
+
+check-assets:
+	@if [ ! -f "$(ASSET_DIR)/symbols.ld" ]; then \
+		echo "Error: no asset segments. Run 'make -f Makefile.s30 assets' first."; \
+		exit 1; \
+	fi
+
+$(BUILD_DIR)/segments.ld $(BUILD_DIR)/segtab.c &: tools/s30/make_segments.py $(wildcard yamls/$(VERSION)/$(REV)/*.yaml)
+	@mkdir -p $(BUILD_DIR)
+	$(PYTHON) tools/s30/make_segments.py
+
+$(GEN_OBJS): %.o: %.c
+	$(LINK) -O2 -Iinclude/s30 -c $< -o $@
+
+# Overlays are linked in, so their statics would outlive the overlay: each
+# one's .data and .bss get their own sections (ovl_<name>_data, _bss), which
+# loading the overlay resets (src/s30/ultra.c). -fno-common keeps their
+# uninitialized variables in .bss.
+OVL_NAME = $(notdir $(patsubst %/,%,$(dir $@)))
+$(BUILD_DIR)/src/overlays/%.o: src/overlays/%.c
+	@mkdir -p $(dir $@)
+	$(CC) $(CFLAGS) -fno-common -c $< -o $@
+	$(OBJCOPY) --rename-section .data=$(OVL_NAME)_data --rename-section .bss=$(OVL_NAME)_bss $@
+
+# Platform layer: system headers (EGL, DRM, ALSA) need a real Linux target
+$(BUILD_DIR)/src/s30/%.o: src/s30/%.c
+	@mkdir -p $(dir $@)
+	$(LINK) -O2 -g -Wall $(DEFINES) $(INCLUDES) -I$(SYSROOT)/usr/include/libdrm -MMD -MP -c $< -o $@
+
+$(BUILD_DIR)/src/%.o: src/%.c
+	@mkdir -p $(dir $@)
+	$(CC) $(CFLAGS) -c $< -o $@
+
+clean:
+	rm -rf $(BUILD_DIR) $(TARGET)
+
+.PHONY: all objects extract assets check-assets clean
+
+-include $(ALL_OBJS:.o=.d)

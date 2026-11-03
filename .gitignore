@@ -30,3 +30,9 @@ debug/
 m2cfiles/
 TempComp.bin.mio0
 torch.hash.yml
+
+# PocketGo S30 build (Makefile.s30)
+/build_s30/
+build_s30.log
+/starfox64
+/starfox64.us.rev1.yaml

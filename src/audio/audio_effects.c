@@ -14,6 +14,14 @@
 #include "sys.h"
 #include "sf64audio.h"
 
+// Envelopes are the sound font's big-endian data, shared between instruments:
+// swapped where they are read (PocketGo S30, little-endian)
+#ifdef TARGET_S30
+#define ENVELOPE_S16(x) ((s16) __builtin_bswap16((u16) (x)))
+#else
+#define ENVELOPE_S16(x) (x)
+#endif
+
 static const char devstr[] = "Audio:Envp: overflow  %f\n";
 
 // Original name: __Nas_CallWaveProcess_Sub
@@ -248,7 +256,7 @@ f32 AudioEffects_UpdateAdsr(AdsrState* adsr) {
         retry:
             // Fallthrough
         case ADSR_STATE_LOOP:
-            adsr->delay = adsr->envelope[adsr->envIndex].delay;
+            adsr->delay = ENVELOPE_S16(adsr->envelope[adsr->envIndex].delay);
             switch (adsr->delay) {
                 case ADSR_DISABLE:
                     adsr->state = ADSR_STATE_DISABLED;
@@ -259,7 +267,7 @@ f32 AudioEffects_UpdateAdsr(AdsrState* adsr) {
                     break;
 
                 case ADSR_GOTO:
-                    adsr->envIndex = adsr->envelope[adsr->envIndex].value;
+                    adsr->envIndex = ENVELOPE_S16(adsr->envelope[adsr->envIndex].value);
                     goto retry;
 
                 case ADSR_RESTART:
@@ -275,7 +283,7 @@ f32 AudioEffects_UpdateAdsr(AdsrState* adsr) {
                         adsr->delay = 1;
                     }
 
-                    adsr->target = adsr->envelope[adsr->envIndex].value / 32767.0f;
+                    adsr->target = ENVELOPE_S16(adsr->envelope[adsr->envIndex].value) / 32767.0f;
                     adsr->target = SQ(adsr->target);
                     adsr->velocity = (adsr->target - adsr->current) / adsr->delay;
                     adsr->state = ADSR_STATE_FADE;

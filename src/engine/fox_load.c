@@ -24,6 +24,46 @@ Scene sCurrentScene = {
       /* 0xF */ NO_SEGMENT },
 };
 
+#ifdef TARGET_S30
+#include "s30_platform.h"
+
+// PocketGo S30: overlays are linked in and asset segments are mapped at their
+// segmented addresses, so a scene loads by ROM address (src/s30/ultra.c).
+void Load_RomFile(void* vRomAddress, void* dest, ptrdiff_t size) {
+    S30_LoadRomSegment((uintptr_t) vRomAddress);
+}
+
+u8 Load_SceneFiles(Scene* scene) {
+    u8 segment;
+    u8 changeScene = false;
+
+    if (scene->ovl.rom.start != sCurrentScene.ovl.rom.start) {
+        sCurrentScene.ovl.rom.start = scene->ovl.rom.start;
+        if (scene->ovl.rom.start != 0) {
+            changeScene = true;
+            S30_LoadRomSegment((uintptr_t) scene->ovl.rom.start);
+        }
+    }
+    for (segment = 0; segment < 15; segment++) {
+        if (scene->assets[segment].start == 0) {
+            continue;
+        }
+        gSegments[segment + 1] = (segment + 1) << 24;
+        gSPSegment(gUnkDisp1++, segment + 1, (segment + 1) << 24);
+        if (changeScene || (scene->assets[segment].start != sCurrentScene.assets[segment].start)) {
+            sCurrentScene.assets[segment].start = scene->assets[segment].start;
+            S30_LoadRomSegment((uintptr_t) scene->assets[segment].start);
+        }
+    }
+
+    if (sFillTimer != 0) {
+        sFillTimer--;
+    } else if (gStartNMI == 0) {
+        Lib_FillScreen(false);
+    }
+    return changeScene;
+}
+#else
 void Load_RomFile(void* vRomAddress, void* dest, ptrdiff_t size) {
     s32 i;
 
@@ -90,6 +130,8 @@ u8 Load_SceneFiles(Scene* scene) {
     }
     return changeScene;
 }
+
+#endif
 
 u8 Load_SceneSetup(u8 sceneId, u8 sceneSetup) {
     u8 changeScene;
@@ -194,6 +236,10 @@ u8 Load_SceneSetup(u8 sceneId, u8 sceneSetup) {
 }
 
 void Load_InitDmaAndMsg(void) {
+#ifdef TARGET_S30 // the DMA table is linked in
+    Load_RomFile(SEGMENT_ROM_START(ast_radio), SEGMENT_VRAM_START(ast_radio), SEGMENT_ROM_SIZE(ast_radio));
+    return;
+#endif
     Lib_DmaRead(SEGMENT_ROM_START(dma_table), SEGMENT_VRAM_START(dma_table), SEGMENT_ROM_SIZE(dma_table));
     Load_RomFile(SEGMENT_ROM_START(ast_radio), SEGMENT_VRAM_START(ast_radio), SEGMENT_ROM_SIZE(ast_radio));
 }

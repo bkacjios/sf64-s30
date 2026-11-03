@@ -261,7 +261,9 @@ void AudioPlayback_ProcessNotes(void) {
 
         playbackState = &note->playbackState;
         if ((playbackState->parentLayer != NO_LAYER)) {
-            if ((u32) playbackState->parentLayer < 0x7FFFFFFF) {
+            // A valid layer pointer: KSEG0 on the N64; on the S30, RAM is at
+            // 0x40000000 and up (AUDIO_RELOCATED_ADDRESS_START)
+            if ((u32) playbackState->parentLayer < AUDIO_RELOCATED_ADDRESS_START) {
                 continue;
             }
 

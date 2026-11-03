@@ -632,6 +632,48 @@ AudioTable* AudioLoad_GetLoadTable(AudioTableType tableType) {
 }
 
 // Original name: Nas_BankOfsToAddr_Inner
+#ifdef TARGET_S30
+// PocketGo S30 (little-endian): sound fonts are the ROM's big-endian data.
+// Each structure is swapped when the font is relocated; the samples, ADPCM
+// books and loops can be shared between instruments, so those are tracked to
+// be swapped once per font load (a swap twice would undo it).
+#define S30_MAX_SWAPPED 1024
+static void* sS30Swapped[S30_MAX_SWAPPED];
+static s32 sS30NumSwapped;
+
+static s32 AudioLoad_S30SwapOnce(void* p) {
+    s32 i;
+
+    for (i = 0; i < sS30NumSwapped; i++) {
+        if (sS30Swapped[i] == p) {
+            return false;
+        }
+    }
+    if (sS30NumSwapped < S30_MAX_SWAPPED) {
+        sS30Swapped[sS30NumSwapped++] = p;
+    }
+    return true;
+}
+
+static void AudioLoad_S30SwapWords(void* p, s32 n) {
+    u32* w = p;
+    s32 i;
+
+    for (i = 0; i < n; i++) {
+        w[i] = __builtin_bswap32(w[i]);
+    }
+}
+
+static void AudioLoad_S30SwapHalves(void* p, s32 n) {
+    u16* h = p;
+    s32 i;
+
+    for (i = 0; i < n; i++) {
+        h[i] = __builtin_bswap16(h[i]);
+    }
+}
+#endif
+
 void AudioLoad_RelocateFont(s32 fontId, uintptr_t fontBaseAddr, void* relocData) {
     uintptr_t* fontDataPtrs = fontBaseAddr;
     uintptr_t** drumDataPtrs = fontBaseAddr;
@@ -645,6 +687,13 @@ void AudioLoad_RelocateFont(s32 fontId, uintptr_t fontBaseAddr, void* relocData)
     numDrums = gSoundFontList[fontId].numDrums;
     numInstruments = gSoundFontList[fontId].numInstruments;
 
+#ifdef TARGET_S30
+    sS30NumSwapped = 0;
+    AudioLoad_S30SwapWords(fontDataPtrs, 1 + numInstruments); // drum list, instrument offsets
+    if ((fontDataPtrs[0] != 0) && (numDrums != 0)) {
+        AudioLoad_S30SwapWords((u8*) fontBaseAddr + fontDataPtrs[0], numDrums);
+    }
+#endif
     if ((fontDataPtrs[0] != 0) && (numDrums != 0)) {
         fontDataPtrs[0] += (uintptr_t) fontBaseAddr;
 
@@ -655,6 +704,10 @@ void AudioLoad_RelocateFont(s32 fontId, uintptr_t fontBaseAddr, void* relocData)
                 *(*drumDataPtrs + i) = drum;
 
                 if (!drum->isRelocated) {
+#ifdef TARGET_S30
+                    AudioLoad_S30SwapWords(&drum->tunedSample, 2); // sample offset, tuning
+                    AudioLoad_S30SwapWords(&drum->envelope, 1);
+#endif
                     AudioLoad_RelocateSample(&drum->tunedSample, fontBaseAddr, relocData);
                     offset = (uintptr_t) drum->envelope;
                     drum->envelope = offset + fontBaseAddr;
@@ -671,6 +724,16 @@ void AudioLoad_RelocateFont(s32 fontId, uintptr_t fontBaseAddr, void* relocData)
 
             instrument = fontDataPtrs[i];
             if (!instrument->isRelocated) {
+#ifdef TARGET_S30
+                AudioLoad_S30SwapWords(&instrument->envelope, 1);
+                if (instrument->normalRangeLo != 0) {
+                    AudioLoad_S30SwapWords(&instrument->lowPitchTunedSample, 2);
+                }
+                AudioLoad_S30SwapWords(&instrument->normalPitchTunedSample, 2);
+                if (instrument->normalRangeHi != 0x7F) {
+                    AudioLoad_S30SwapWords(&instrument->highPitchTunedSample, 2);
+                }
+#endif
                 if (instrument->normalRangeLo != 0) {
                     AudioLoad_RelocateSample(&instrument->lowPitchTunedSample, fontBaseAddr, relocData);
                 }
@@ -980,6 +1043,16 @@ void AudioLoad_Init(void) {
     gSoundFontTable = &gSoundFontTableInit;
     gSampleBankTable = &gSampleBankTableInit;
     gSeqFontTable = gSeqFontTableInit;
+#ifdef TARGET_S30
+    {
+        // The table starts with a big-endian u16 offset per sequence
+        static s32 sSwapped = false;
+        if (!sSwapped) {
+            AudioLoad_S30SwapHalves(gSeqFontTable, gSeqTableInit.base.numEntries);
+            sSwapped = true;
+        }
+    }
+#endif
     gNumSequences = gSequenceTable->base.numEntries;
 
     AudioLoad_InitTable(gSequenceTable, SEGMENT_ROM_START(audio_seq), gSequenceMedium);
@@ -1343,6 +1416,26 @@ void AudioLoad_RelocateSample(TunedSample* tSample, uintptr_t fontDataAddr, Samp
     }
 
     sample = tSample->sample = reloc = (u32) tSample->sample + fontDataAddr;
+#ifdef TARGET_S30
+    if (AudioLoad_S30SwapOnce(sample)) {
+        AudioLoad_S30SwapWords(sample, 4); // bitfields and size, sample, loop, book offsets
+        if (sample->size != 0 && !sample->isRelocated) {
+            AdpcmLoop* loop = (AdpcmLoop*) ((uintptr_t) sample->loop + fontDataAddr);
+            AdpcmBook* book = (AdpcmBook*) ((uintptr_t) sample->book + fontDataAddr);
+
+            if (AudioLoad_S30SwapOnce(loop)) {
+                AudioLoad_S30SwapWords(loop, 3);
+                if (loop->count != 0) {
+                    AudioLoad_S30SwapHalves(loop->predictorState, 16);
+                }
+            }
+            if (AudioLoad_S30SwapOnce(book)) {
+                AudioLoad_S30SwapWords(book, 2);
+                AudioLoad_S30SwapHalves(book->book, 8 * book->order * book->numPredictors);
+            }
+        }
+    }
+#endif
 
     // If the sample exists and has not already been relocated
     // Note: this is important, as the same sample can be used by different drums, sound effects, instruments

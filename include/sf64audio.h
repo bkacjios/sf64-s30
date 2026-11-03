@@ -65,7 +65,13 @@ typedef void (*AudioCustomUpdateFunction)(void);
 // Must be the same amount of samples as copied by aDuplicate() (audio microcode)
 #define WAVE_SAMPLE_COUNT 64
 
+#ifdef TARGET_S30
+// Relocated font pointers are RAM addresses: on the S30 the image and heap sit
+// at 0x40000000 and up (Makefile.s30), not in KSEG0
+#define AUDIO_RELOCATED_ADDRESS_START 0x10000000
+#else
 #define AUDIO_RELOCATED_ADDRESS_START K0BASE
+#endif
 
 #define AUDIOLOAD_SYNC 0
 #define AUDIOLOAD_ASYNC 1
@@ -257,11 +263,21 @@ typedef struct AdpcmBook {
 } AdpcmBook; // size >= 8, 0x8 aligned
 
 typedef struct Sample {
+#ifdef TARGET_S30
+    // Little-endian: the first word is byte-swapped at load (audio_load.c), and
+    // GCC allocates bitfields from the low bit, so they are listed reversed
+    /* 0x01 */ u32 size : 24;       // Size of the sample
+    /* 0x00 */ u32 isRelocated : 1; // Has the sample header been relocated (offsets to pointers)
+    /* 0x00 */ u32 unk_bit26 : 1;
+    /* 0x00 */ u32 medium : 2; // Medium where sample is currently stored
+    /* 0x00 */ u32 codec : 4;  // The state of compression or decompression
+#else
     /* 0x00 */ u32 codec : 4;  // The state of compression or decompression
     /* 0x00 */ u32 medium : 2; // Medium where sample is currently stored
     /* 0x00 */ u32 unk_bit26 : 1;
     /* 0x00 */ u32 isRelocated : 1; // Has the sample header been relocated (offsets to pointers)
     /* 0x01 */ u32 size : 24;       // Size of the sample
+#endif
     /* 0x04 */ u8* sampleAddr;      // Raw sample data. Offset from the start of the sample bank or absolute address to
                                     // either rom or ram
     /* 0x08 */ AdpcmLoop*
@@ -426,12 +442,22 @@ typedef struct AdsrState {
 } AdsrState; // size = 0x24
 
 typedef struct StereoData {
+#ifdef TARGET_S30
+    // Little-endian: bitfields pack from the low bit (sequences set asByte)
+    /* 0x00 */ u8 strongLeft : 1;
+    /* 0x00 */ u8 strongRight : 1;
+    /* 0x00 */ u8 bit2 : 2;
+    /* 0x00 */ u8 unused : 2;
+    /* 0x00 */ u8 usesHeadsetPanEffects : 1;
+    /* 0x00 */ u8 stereoHeadsetEffects : 1;
+#else
     /* 0x00 */ u8 stereoHeadsetEffects : 1;
     /* 0x00 */ u8 usesHeadsetPanEffects : 1;
     /* 0x00 */ u8 unused : 2;
     /* 0x00 */ u8 bit2 : 2;
     /* 0x00 */ u8 strongRight : 1;
     /* 0x00 */ u8 strongLeft : 1;
+#endif
 } StereoData; // size = 0x1
 
 typedef union Stereo {
@@ -797,6 +823,38 @@ typedef struct AudioPreloadReq {
  * Audio commands used to transfer audio requests from the graph thread to the audio thread
  */
 typedef struct AudioCmd {
+#ifdef TARGET_S30
+    // Little-endian: the commands are built as words (op in the top byte, small
+    // values shifted to the top, see AudioThread_QueueCmdS8), so the byte and
+    // halfword views are at the top end of each word
+    /* 0x0 */ union {
+        u32 opArgs;
+        struct {
+            u8 arg2;
+            u8 arg1;
+            u8 arg0;
+            u8 op;
+        };
+    };
+    /* 0x4 */ union {
+        void* data;
+        f32 asFloat;
+        s32 asInt;
+        struct {
+            u16 asUShortPad;
+            u16 asUShort;
+        };
+        struct {
+            u8 asSbytePad[3];
+            s8 asSbyte;
+        };
+        struct {
+            u8 asUbytePad[3];
+            u8 asUbyte;
+        };
+        u32 asUInt;
+    };
+#else
     /* 0x0 */ union {
         u32 opArgs;
         struct {
@@ -815,6 +873,7 @@ typedef struct AudioCmd {
         u8 asUbyte;
         u32 asUInt;
     };
+#endif
 } AudioCmd; // size = 0x8
 
 typedef struct AudioAsyncLoad {
