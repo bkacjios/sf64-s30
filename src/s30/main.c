@@ -78,8 +78,9 @@ int main(int argc, char** argv) {
     osInitialize();
     S30_InitOverlays();
     {
-        // Star Fox: F3DEX, fixed-point Mtx, textures as the arrays Torch typed
-        S30GfxConfig gfx = { S30_UCODE_F3DEX, gSegments, 0, tex_elem_size, "SF64" };
+        // Star Fox: F3DEX, fixed-point Mtx, textures as the arrays Torch typed,
+        // scissored to the screen minus SCREEN_MARGIN (opened to the full frame)
+        S30GfxConfig gfx = { S30_UCODE_F3DEX, gSegments, 0, tex_elem_size, "SF64", 8 };
         S30Gfx_Configure(&gfx);
     }
     S30Display_Init();
