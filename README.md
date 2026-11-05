@@ -13,7 +13,8 @@ make -f Makefile.s30 -j$(nproc)           # starfox64
 ```
 
 On the card: `starfox64`, `build_s30/assets/data/*.bin` and `baserom.us.rev1.uncompressed.z64` in
-`/mnt/sd/home/ports/sf64/data`. See `src/s30/` (libultra on Linux, segment loading) and `tools/s30/`.
+`/mnt/sd/home/ports/sf64/data`. See `src/s30/` (segment loading; libultra's
+OS is `n64/src/os.c`) and `tools/s30/`.
 
 ---
 

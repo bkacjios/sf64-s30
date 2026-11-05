@@ -440,7 +440,7 @@ void Main_StartNextTask(void) {
 // PocketGo S30: one game thread runs what the graphics thread did, and the
 // display list is drawn right away (src/s30/gfx.c), paced by the display to
 // gVIsPerFrame refreshes per frame. The serial thread (controller, save) and
-// the timer thread are real threads (src/s30/ultra.c); the main, idle and
+// the timer thread are real threads (n64/src/os.c); the main, idle and
 // audio threads aren't used.
 static void S30_BuildFrame(void) {
     gSPSegment(gUnkDisp1++, 0, 0);

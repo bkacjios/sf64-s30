@@ -40,6 +40,8 @@ CFLAGS := $(TARGET_FLAGS) -O2 -g -std=gnu11 $(DEFINES) $(INCLUDES) \
     -MMD -MP
 
 BUILD_DIR := build_s30
+# libultra's OS from the library too (n64/src/os.c)
+N64LIB_OS := 1
 include $(N64LIB)/n64.mk
 TARGET := starfox64
 LIBS := $(N64LIB_LIBS)
